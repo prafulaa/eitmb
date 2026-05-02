@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Copy, Sparkles, ArrowRight, CheckCircle2, Lock, LogIn, User, LogOut } from "lucide-react";
+import { Copy, Sparkles, ArrowRight, CheckCircle2, Lock, LogIn, User, LogOut, Mic, MicOff } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 
 export default function Home() {
@@ -17,6 +17,7 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
 
   const supabase = createClient();
 
@@ -162,6 +163,53 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const toggleRecording = () => {
+    if (isRecording) {
+      setIsRecording(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Your browser does not support Voice Recording. Please use Google Chrome.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+    };
+
+    recognition.onresult = (event: any) => {
+      let currentTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          currentTranscript += event.results[i][0].transcript + ' ';
+        }
+      }
+      if (currentTranscript) {
+        setInput((prev) => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + currentTranscript);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error", event.error);
+      setIsRecording(false);
+    };
+
+    recognition.onend = () => {
+      // If still supposed to be recording, restart it (sometimes it auto-stops on silence)
+      // Otherwise, keep it off. For simplicity, we'll just stop.
+      setIsRecording(false);
+    };
+
+    recognition.start();
+  };
+
   return (
     <div className="flex flex-col min-h-screen">
       {/* Header */}
@@ -228,14 +276,28 @@ export default function Home() {
 
         {/* Translater UI */}
         <div className="w-full bg-white rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200 overflow-hidden flex flex-col lg:flex-row">
-          <div className="flex-1 p-6 lg:p-8 flex flex-col gap-4 border-b lg:border-b-0 lg:border-r border-slate-200">
-            <label className="text-sm font-semibold text-slate-500 uppercase tracking-wider">What the Dev Said</label>
+          <div className="flex-1 p-6 lg:p-8 flex flex-col gap-4 border-b lg:border-b-0 lg:border-r border-slate-200 relative group">
+            <div className="flex justify-between items-center">
+              <label className="text-sm font-semibold text-slate-500 uppercase tracking-wider">What the Dev Said</label>
+              <button
+                onClick={toggleRecording}
+                className={`p-2 rounded-full transition-all ${isRecording ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800'}`}
+                title={isRecording ? "Stop Recording" : "Start Recording"}
+              >
+                {isRecording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              </button>
+            </div>
             <textarea 
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Paste what your developer/logs said here (e.g., CORS policy failure, DNS propagation delay)..."
+              placeholder="Paste what your developer/logs said here, or click the mic to record a meeting..."
               className="flex-1 min-h-[200px] lg:min-h-[300px] w-full resize-none outline-none text-lg text-slate-800 placeholder-slate-400 bg-transparent"
             />
+            {isRecording && (
+              <div className="absolute bottom-6 left-6 right-6 text-center text-sm font-bold text-red-600 bg-red-50 py-2 rounded-lg border border-red-200 animate-in slide-in-from-bottom-2">
+                Recording... Speak now.
+              </div>
+            )}
           </div>
 
           <div className="flex-1 p-6 lg:p-8 flex flex-col gap-4 bg-slate-50/50">
