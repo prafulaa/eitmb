@@ -143,6 +143,18 @@ export default function Home() {
     }
   };
 
+  const handleManageSubscription = async () => {
+    try {
+      const res = await fetch("/api/portal", { method: "POST" });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (err) {
+      console.error("Portal error:", err);
+    }
+  };
+
   const handleCopy = () => {
     if (!output) return;
     navigator.clipboard.writeText(output);
@@ -184,7 +196,14 @@ export default function Home() {
               Login
             </button>
           )}
-          {!isPro && (
+          {isPro ? (
+            <button 
+              onClick={handleManageSubscription}
+              className="bg-slate-100 text-slate-700 text-sm font-bold px-4 py-2 rounded-full hover:bg-slate-200 transition-colors shadow-sm border border-slate-200"
+            >
+              Manage Subscription
+            </button>
+          ) : (
             <button 
               onClick={() => setShowPaywall(true)}
               className="bg-slate-900 text-white text-sm font-bold px-4 py-2 rounded-full hover:bg-slate-800 transition-shadow shadow-sm"
