@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Copy, Sparkles, ArrowRight, CheckCircle2, Lock, LogIn, User, LogOut, Mic, MicOff } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Copy, Sparkles, ArrowRight, CheckCircle2, Lock, LogIn, User, LogOut, Mic, MicOff, Loader2 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 
 export default function Home() {
@@ -18,10 +18,43 @@ export default function Home() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [modelLoadingProgress, setModelLoadingProgress] = useState(0);
+  const [isModelLoading, setIsModelLoading] = useState(false);
+  
+  const worker = useRef<Worker | null>(null);
+  const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const audioChunks = useRef<Blob[]>([]);
 
   const supabase = createClient();
 
   useEffect(() => {
+    // Initialize Web Worker for Whisper
+    worker.current = new Worker(new URL('../utils/worker', import.meta.url), {
+        type: 'module'
+    });
+
+    worker.current.addEventListener('message', (e) => {
+        switch (e.data.status) {
+            case 'initiate':
+                setIsModelLoading(true);
+                break;
+            case 'progress':
+                setModelLoadingProgress(Math.round(e.data.progress));
+                break;
+            case 'done':
+                setIsModelLoading(false);
+                break;
+            case 'complete':
+                setInput((prev) => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + e.data.output.text);
+                setIsTranslating(false); 
+                break;
+            case 'error':
+                console.error("Transcription error:", e.data.error);
+                setIsTranslating(false);
+                break;
+        }
+    });
+
     // 1. Get User Session
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUser(user);
@@ -40,7 +73,10 @@ export default function Home() {
       setUsageCount(count);
     }
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      worker.current?.terminate();
+    };
   }, []);
 
   const fetchProfile = async (userId: string) => {
@@ -163,51 +199,46 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const toggleRecording = () => {
+  const processAudio = async (blob: Blob) => {
+    setIsTranslating(true); // Show translating/processing state
+    try {
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      const audioData = audioBuffer.getChannelData(0); 
+      worker.current?.postMessage({ audio: audioData });
+    } catch (e) {
+      console.error("Audio processing failed", e);
+      setIsTranslating(false);
+    }
+  };
+
+  const toggleRecording = async () => {
     if (isRecording) {
+      mediaRecorder.current?.stop();
       setIsRecording(false);
       return;
     }
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Your browser does not support Voice Recording. Please use Google Chrome.");
-      return;
-    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunks.current = [];
 
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
+      recorder.ondataavailable = (e) => audioChunks.current.push(e.data);
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunks.current, { type: 'audio/webm' });
+        processAudio(audioBlob);
+        stream.getTracks().forEach(track => track.stop());
+      };
 
-    recognition.onstart = () => {
+      recorder.start();
+      mediaRecorder.current = recorder;
       setIsRecording(true);
-    };
-
-    recognition.onresult = (event: any) => {
-      let currentTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          currentTranscript += event.results[i][0].transcript + ' ';
-        }
-      }
-      if (currentTranscript) {
-        setInput((prev) => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + currentTranscript);
-      }
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error("Speech recognition error", event.error);
-      setIsRecording(false);
-    };
-
-    recognition.onend = () => {
-      // If still supposed to be recording, restart it (sometimes it auto-stops on silence)
-      // Otherwise, keep it off. For simplicity, we'll just stop.
-      setIsRecording(false);
-    };
-
-    recognition.start();
+    } catch (err) {
+      alert("Microphone access denied or unavailable.");
+      console.error(err);
+    }
   };
 
   return (
@@ -296,6 +327,12 @@ export default function Home() {
             {isRecording && (
               <div className="absolute bottom-6 left-6 right-6 text-center text-sm font-bold text-red-600 bg-red-50 py-2 rounded-lg border border-red-200 animate-in slide-in-from-bottom-2">
                 Recording... Speak now.
+              </div>
+            )}
+            {isModelLoading && (
+              <div className="absolute bottom-6 left-6 right-6 text-center text-sm font-bold text-blue-600 bg-blue-50 py-2 rounded-lg border border-blue-200 animate-in slide-in-from-bottom-2 flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Downloading AI Whisper Model ({modelLoadingProgress}%)
               </div>
             )}
           </div>
